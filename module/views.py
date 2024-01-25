@@ -1,121 +1,207 @@
-import uuid
-from flask import Flask, jsonify, request
+from flask import jsonify, request
 from datetime import date
+from module import app, db
+from module.models import UserModel, RecordModel, CategoryModel
+from module.schemas import UserSchema, RecordSchema, CategorySchema
+from marshmallow import ValidationError
+from sqlalchemy.exc import IntegrityError
 
-app = Flask(__name__)
-users = {}
-categories = {}
-records = {}
+with app.app_context():
+    db.create_all()
+    db.session.commit()
 
 
 @app.get("/user/<user_id>")
 def get_user(user_id):
-    if user_id in users.keys():
-        return users[user_id], 200
-    else:
-        return jsonify({"Error":"No user with this id"}), 400
+    user = UserModel.query.get_or_404(user_id)
+    response = {
+        "id": user.id,
+        "name": user.name
+    }
+    return response, 200
+
 
 @app.delete("/user/<user_id>")
 def delete_user(user_id):
-    if user_id in users.keys():
-        user = users[user_id]
-        del users[user_id]
-        return jsonify(user), 200
-    else:
-        return jsonify({"Error":"No user with this id"}), 400
+    user = UserModel.query.get_or_404(user_id)
+    db.session.delete(user)
+    db.session.commit()
+    return {"Message": "User successfully deleted"}, 200
+
 
 @app.post("/user")
 def add_user():
-    user_name = request.args.get("name")
-    user_id = uuid.uuid4().hex
-    user = {
-        "id": user_id,
-        "name": user_name
+    user_data = request.args
+    try:
+        user_valid = UserSchema().load(user_data)
+    except ValidationError as error:
+        return jsonify({'Error': error.messages}), 400
+
+    user = UserModel(name=user_valid["name"])
+    try:
+        db.session.add(user)
+        db.session.commit()
+    except IntegrityError:
+        return jsonify({"Error": "IntegrityError"}), 400
+    response = {
+        "id": user.id,
+        "name": user.name
     }
-    users[user_id] = user
-    return user, 200
+    return response, 200
+
 
 @app.get("/users")
 def get_users():
-    return jsonify(list(users.values())), 200
+    res = []
+
+    for user in UserModel.query.all():
+        res.append({
+            "id": user.id,
+            "name": user.name
+        })
+    return jsonify(res), 200
+
 
 @app.get("/category")
 def get_category():
     category_id = request.args.get("id")
-    if category_id in categories.keys():
-        return categories[category_id], 200
+    category = CategoryModel.query.get_or_404(category_id)
+
+    response = {
+        "id": category.id,
+        "name": category.name
+    }
+    return response, 200
+
+
+@app.get("/categories")
+def get_categories():
+    user_id = request.args.get("user_id")
+    res = []
+
+    if user_id is None:
+        categories = CategoryModel.query.filter_by(is_general=True).all()
     else:
-        return jsonify({"Error":"No category with this id"}), 400
+        categories = CategoryModel.query.filter_by(is_general=False, user_id=user_id).all()
+
+    for category in categories:
+        res.append({
+            "id": category.id,
+            "name": category.name,
+            "is_general": category.is_general,
+        })
+    return jsonify(res), 200
+
 
 @app.post("/category")
 def add_category():
-    category_name = request.args.get("name")
-    category_id = uuid.uuid4().hex
-    category = {
-        "id": category_id,
-        "name": category_name
+    category_data = request.args
+    categ_valid = CategorySchema()
+    try:
+        categ_valid = categ_valid.load(category_data)
+    except ValidationError as error:
+        return jsonify({'Error': error.messages}), 400
+
+    name = categ_valid.get("name")
+    user_id = categ_valid.get("user_id")
+
+    if user_id is None:
+        category = CategoryModel(name=name, is_general=True)
+    else:
+        category = CategoryModel(name=name, is_general=False, user_id=user_id)
+
+    try:
+        db.session.add(category)
+        db.session.commit()
+    except IntegrityError:
+        return jsonify({"Error": "IntegrityError"}), 400
+    response = {
+        "id": category.id,
+        "name": category.name
     }
-    categories[category_id] = category
-    return category, 200
+    return response, 200
 
 @app.delete("/category")
 def delete_category():
     category_id = request.args.get("id")
-    if category_id in categories.keys():
-        category = categories[category_id]
-        del categories[category_id]
-        return jsonify(category), 200
-    else:
-        return jsonify({"Error":"No category with this id"}), 400
-
-@app.get("/categories")
-def get_categories():
-    return jsonify(list(categories.values())), 200
+    category = CategoryModel.query.get_or_404(category_id)
+    db.session.delete(category)
+    db.session.commit()
+    return {"Message": "Category successfully deleted"}
 
 @app.get("/record/<record_id>")
 def get_record(record_id):
-    if record_id in records.keys():
-        return records[record_id], 200
-    else:
-        return jsonify({"Error":"No record with this id"}), 400
+    record = RecordModel.query.get_or_404(record_id)
+    response = {
+        "id": record.id,
+        "user_id": record.user_id,
+        "category_id": record.category_id,
+        "creation_time": record.creation_time,
+        "expenses": record.expenses
+    }
+    return response, 200
 
 @app.delete("/record/<record_id>")
 def delete_record(record_id):
-    if record_id in records.keys():
-        record = records[record_id]
-        del records[record_id]
-        return jsonify(record), 200
-    else:
-        return jsonify({"Error":"No record with this id"}), 400
+    record = RecordModel.query.get_or_404(record_id)
+    db.session.delete(record)
+    db.session.commit()
+    return {"Message": "Record successfully deleted"}
 
 @app.post("/record")
 def add_record():
-    record_id = uuid.uuid4().hex
-    record = {
-        "id": record_id,
-        "user_id": request.args.get("user_id"),
-        "category_id": request.args.get("category_id"),
-        "creation_time": date.today(),
-        "expenses": request.args.get("expenses")
+    record_data = request.args
+    record_valid = RecordSchema()
+    try:
+        record_valid = record_valid.load(record_data)
+    except ValidationError as error:
+        return jsonify({'Error': error.messages}), 400
+
+    if not record_valid.get("user_id") and not record_valid.get("category_id"):
+        return jsonify({'Error': "Provide at least one argument: category_id or user_id" }), 400
+
+    record = RecordModel(expenses=record_valid.get("expenses"), user_id=record_valid.get("user_id"), category_id=record_valid.get("category_id"))
+
+    try:
+        db.session.add(record)
+        db.session.commit()
+    except IntegrityError:
+        return jsonify({"Error": "IntegrityError"}), 400
+    response = {
+        "id": record.id,
+        "user_id": record.user_id,
+        "category_id": record.category_id,
+        "creation_time": record.creation_time,
+        "expenses": record.expenses
     }
-    records[record_id] = record
-    return record, 200
+    return response, 200
 
 @app.get("/record")
 def filter_records():
     category_id = request.args.get('category_id')
     user_id = request.args.get('user_id')
+    records = []
     res = []
 
     if not category_id and not user_id:
         return jsonify({"Error": "Provide at least one argument: category_id or user_id"}), 400
 
-    for record in records.values():
-        match_category = record["category_id"] == category_id if category_id else True
-        match_user = record["user_id"] == user_id if user_id else True
+    if category_id and user_id:
+        records = RecordModel.query.filter_by(category_id=category_id, user_id=user_id)
+    else:
+        if category_id:
+            records = RecordModel.query.filter_by(category_id=category_id)
+        if user_id:
+            records = RecordModel.query.filter_by(user_id=user_id)
 
-        if match_category or match_user:
-            res.append(record)
+    for record in records:
+        res.append({
+            "id": record.id,
+            "user_id": record.user_id,
+            "category_id": record.category_id,
+            "creation_time": record.creation_time,
+            "expenses": record.expenses
+        })
 
     return jsonify(res), 200
 
